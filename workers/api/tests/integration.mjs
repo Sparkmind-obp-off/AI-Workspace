@@ -1,0 +1,53 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+const base = process.env.WORKSPACE_TEST_URL || 'http://localhost:3000';
+const password = process.env.WORKSPACE_TEST_PASSWORD || (await readFile('.private/owner-password', 'utf8')).trim();
+let cookie = '';
+async function request(path, method = 'GET', body, custom = {}) {
+  const r = await fetch(base + '/api' + path, { method, headers: { origin: new URL(base).origin, 'content-type': 'application/json', 'x-workspace-request': '1', ...(cookie ? { cookie } : {}), ...custom }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const data = await r.json(); return { status: r.status, data, headers: r.headers };
+}
+let passed = 0;
+const check = (label, fn) => { fn(); passed++; console.log('PASS ' + label); };
+let r = await request('/conversations'); check('private endpoint rejects anonymous access', () => assert.equal(r.status, 401));
+r = await request('/auth/login', 'POST', { password: 'wrong-password' }); check('invalid password rejected', () => assert.equal(r.status, 401));
+r = await request('/auth/login', 'POST', { password }); check('owner login succeeds', () => assert.equal(r.status, 200));
+cookie = r.headers.get('set-cookie').split(';')[0];
+check('session cookie is HttpOnly Secure SameSite=Strict', () => { const h = r.headers.get('set-cookie'); assert.ok(h.includes('HttpOnly') && h.includes('Secure') && h.includes('SameSite=Strict')); });
+r = await request('/conversations', 'POST', {}, { origin: 'https://evil.example' }); check('cross-origin writes blocked', () => assert.equal(r.status, 403));
+r = await request('/conversations', 'POST'); assert.equal(r.status, 201); const cid = r.data.id;
+r = await request('/chat', 'POST', { conversationId: cid, provider: 'demo', content: '' , requestId: crypto.randomUUID() }); check('empty chat input rejected', () => assert.equal(r.status, 400));
+r = await request('/chat', 'POST', { conversationId: cid, provider: 'demo', content: 'x'.repeat(26000), requestId: crypto.randomUUID() }); check('oversized request rejected', () => assert.equal(r.status, 413));
+const message = { conversationId: cid, provider: 'demo', content: 'Persistence test: one two three.', requestId: crypto.randomUUID() };
+r = await request('/chat', 'POST', message); check('demo chat explicitly labeled', () => { assert.equal(r.status, 200); assert.equal(r.data.demo, true); });
+r = await request('/chat', 'POST', message); check('request replay deduplicated', () => assert.equal(r.data.reused, true));
+r = await request('/conversations/' + cid); check('history restored from D1 with exactly two messages', () => { assert.equal(r.data.messages.length, 2); assert.equal(r.data.messages[0].content, message.content); });
+r = await request('/tasks', 'POST', { objective: 'Count text', provider: 'demo', steps: [{ tool: 'shell', input: { command: 'ls' } }] }); check('arbitrary shell tool forbidden', () => assert.equal(r.status, 400));
+r = await request('/tasks', 'POST', { objective: 'Apify forbidden', provider: 'demo', steps: [{ tool: 'apify.run', input: { actor: 'not~approved', actorInput: {} } }] }); check('unapproved Actor forbidden without billable calls', () => assert.equal(r.status, 403));
+r = await request('/tasks', 'POST', { objective: 'Count words', provider: 'demo', steps: [{ tool: 'text.stats', input: { text: 'one two three' } }] }); assert.equal(r.status, 201); const tid = r.data.task.id;
+r = await request('/tasks/' + tid + '/run', 'POST'); check('execution denied before human approval', () => assert.equal(r.status, 403));
+r = await request('/tasks/' + tid + '/approve', 'POST'); assert.equal(r.status, 200);
+r = await request('/tasks/' + tid + '/run', 'POST'); check('approved tool actually executes and records output', () => { assert.equal(r.data.task.status, 'completed'); assert.equal(JSON.parse(r.data.logs[0].output_json).words, 3); assert.equal(r.data.approvals[0].status, 'approved'); });
+r = await request('/tasks/' + tid + '/run', 'POST'); check('completed task cannot execute twice', () => assert.equal(r.status, 409));
+r = await request('/tasks/' + tid, 'DELETE'); check('owner can delete task and execution logs', () => assert.equal(r.status, 200));
+r = await request('/tasks/' + tid); check('deleted task is no longer accessible', () => assert.equal(r.status, 404));
+const foreignTask = '00000000-0000-4000-8000-000000000098';
+r = await request('/tasks/' + foreignTask); check('foreign task log inaccessible', () => assert.equal(r.status, 404));
+r = await request('/tasks/' + foreignTask + '/approve', 'POST'); check('foreign task cannot be approved', () => assert.equal(r.status, 404));
+const foreign = '00000000-0000-4000-8000-000000000099';
+r = await request('/conversations/' + foreign); check('foreign owned resource inaccessible', () => assert.equal(r.status, 404));
+r = await request('/conversations/' + foreign, 'DELETE'); check('foreign resource cannot be deleted', () => assert.equal(r.status, 404));
+r = await request('/settings'); const groq = r.data.providers.find(p => p.id === 'groq');
+if (groq?.configured) {
+  r = await request('/providers/test', 'POST', { provider: 'groq' }); check('Groq credential and configured model validated read-only', () => { assert.equal(r.status, 200); assert.equal(r.data.modelAvailable, true); });
+  r = await request('/chat', 'POST', { conversationId: cid, provider: 'groq', content: 'Reply with exactly: AI-Workspace connection verified', requestId: crypto.randomUUID() }); check('real Groq response returned, not demo', () => { assert.equal(r.status, 200); assert.equal(r.data.demo, false); assert.ok(r.data.reply.length > 0); });
+  r = await request('/conversations/' + cid); check('real response persisted alongside prior messages', () => { assert.equal(r.data.messages.length, 4); assert.equal(r.data.messages[3].provider, 'groq'); });
+} else console.log('SKIP real Groq: GROQ_API_KEY missing');
+let limited = false;
+for (let i = 0; i < 11; i++) { const result = await request('/providers/test', 'POST', { provider: 'demo' }); if (result.status === 429) { limited = true; break; } }
+check('D1-backed provider-test rate limit enforces 429', () => assert.equal(limited, true));
+r = await request('/conversations/' + cid, 'DELETE'); assert.equal(r.status, 200);
+r = await request('/conversations/' + cid); check('conversation deletion removes private resource', () => assert.equal(r.status, 404));
+r = await request('/auth/logout', 'POST'); assert.equal(r.status, 200);
+r = await request('/auth/me'); check('logout revokes session in D1', () => assert.equal(r.status, 401));
+console.log(`Integration checks passed: ${passed}`);
