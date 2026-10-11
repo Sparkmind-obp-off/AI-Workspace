@@ -21,10 +21,13 @@ Requirements: Node.js 20+ and npm.
 
 ```bash
 npm install
+# Terminal 1: frontend
 npm run dev
+# Terminal 2: API worker
+npm run dev:api
 ```
 
-The initial scaffold runs in demo mode until an AI provider secret is configured. Never put provider API keys in frontend environment variables.
+The initial scaffold runs in demo mode until an AI provider secret is configured. Never put provider API keys in frontend environment variables. The API Worker runs separately on port 8787 during local development.
 
 ## Cloudflare
 Configure a D1 database and set `AI_PROVIDER` and the selected provider's API key as Worker secrets. See `docs/ARCHITECTURE.md` and `docs/SECURITY.md`.
