@@ -3,14 +3,19 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "workspaces": ["apps/web"],
+  "workspaces": [
+    "apps/web"
+  ],
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:web": "vite --host 0.0.0.0",
+    "dev:api": "npm --prefix workers/api run dev"
   },
   "devDependencies": {
     "vite": "^6.1.0",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "@vitejs/plugin-react": "^4.3.4"
   }
 }
