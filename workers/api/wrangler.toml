@@ -1,0 +1,13 @@
+name = "ai-workspace-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-11"
+
+[vars]
+AI_PROVIDER = "demo"
+ALLOWED_ORIGIN = "*"
+
+# Create a D1 database, then uncomment and replace database_name/database_id.
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "ai-workspace"
+# database_id = "REPLACE_WITH_D1_DATABASE_ID"
