@@ -39,11 +39,10 @@ async function callProvider(env: Env, messages: ChatMessage[]): Promise<string> 
     }));
     const system = messages.find(m => m.role === "system")?.content;
     const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" +
-      encodeURIComponent(env.GEMINI_API_KEY),
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
         body: JSON.stringify({
           contents,
           ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
